@@ -1,1 +1,83 @@
+library(Seurat)
+library(msigdbr)
+library(fgsea)
+library(dplyr)
+library(ggplot2)
+library(data.table)
 
+
+###FGSEA of the monocyte clusters
+Mono.1.int.SCT <- readRDS("C:/Angelica/R_JE_computer/Saved_files/QC_all_lib_all_cells/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/Excluding_P3093/Mono.1.int.SCT.rds")
+
+Mono.1.int.SCT <- SetIdent(Mono.1.int.SCT, value = Mono.1.int.SCT@meta.data$integrated_snn_res.0.3.group)
+
+DefaultAssay(Mono.1.int.SCT) <- "RNA"
+
+#Differential gene analysis of cluster 0, comparing HIV-1 to negative
+cluster0_1vs0 <- FindMarkers(Mono.1.int.SCT, ident.1 = "0_1", ident.2 = "0_0", verbose = FALSE, logfc.threshold = FALSE)
+cluster0_1vs0 <- tibble::rownames_to_column(cluster0_1vs0, "gene_names")
+head(cluster0_1vs0)
+
+#Load the msigdb
+msigdbr_species()
+#Select which category to use.
+#Continue with C5 GO:BP
+C5_GOBP <- msigdbr(species = "Homo sapiens", category = "C5", subcategory = "GO:BP")
+
+head(C5_GOBP)
+
+fgsea_sets <- C5_GOBP %>% split(x = .$gene_symbol, f = .$gs_name)
+
+#Arrange your DEG file by avg_log2FC and adj p value
+cluster0_1vs0 %>%
+  dplyr::arrange(desc(avg_log2FC), desc(p_val_adj)) %>%
+  head(n = 10)
+
+#Rank genes on avg_log2FC. 
+cluster0.genes_1vs0 <- cluster0_1vs0 %>%
+  dplyr::arrange(desc(avg_log2FC)) %>% 
+  dplyr::select(gene_names, avg_log2FC)
+
+ranks <- tibble::deframe(cluster0.genes_1vs0)
+
+#Run GSEA using the fgseaMultilevel.
+fgseaRes<- fgseaMultilevel(fgsea_sets, stats = ranks)
+
+fgseaResTidy <- fgseaRes %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+
+ggplot(fgseaResTidy %>% filter(padj < 0.001) %>% head(n= 10), aes(reorder(pathway, NES), NES)) +
+  geom_col(aes(fill= NES < 7.5)) +
+  coord_flip() +
+  labs(x="Pathway", y="Normalized Enrichment Score",
+       title="Cluster 0, 0 vs 1") + 
+  theme_minimal()
+
+#Plot enriched processes of interest
+plotEnrichment(fgsea_sets[["GOBP_RESPONSE_TO_TYPE_I_INTERFERON"]],
+               ranks) + labs(title="Cluster0 1vs0 IFN")
+
+#Export list of enriched pathway with leadingEdge genes
+sig_pathways <- fgseaRes[fgseaRes$padj < 0.001, ]
+
+fwrite(sig_pathways, file="C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/FGSEA/cluster0_1vs0_sig_path_leadingEdge.csv" , sep="\t", sep2=c("", " ", ""))
+
+
+#Modify the results to export a list of significant pathways (excluding leadingEdge gene lists) to upload to QuickGO for investigation of child and parental terms.
+C5_GOBP_name_source <- C5_GOBP[c('gs_name', 'gs_exact_source')]
+
+C5_GOBP_name_source_ed <- C5_GOBP_name_source[!duplicated(C5_GOBP_name_source), ]
+
+colnames(C5_GOBP_name_source_ed)[which(names(C5_GOBP_name_source_ed) == "gs_name")] <- "pathway"
+
+sig_pathways <- fgseaRes[fgseaRes$padj < 0.001, ]
+
+joined_pathways <- left_join(sig_pathways, C5_GOBP_name_source_ed, "pathway")
+
+joined_pathways$leadingEdge <- NULL
+
+#Export simplified list, excluding leadingEdge genes
+write.table(joined_pathways, "C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/FGSEA/cluster0_1vs0_fgseas_sig_pathways.csv")
+
+#Repeat the steps above for analysis of other clusters and/or group comparisons.
