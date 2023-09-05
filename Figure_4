@@ -1,0 +1,64 @@
+library(Seurat)
+library(pheatmap)
+
+#Plot heatmaps of the top DEGs
+Mono.1.int.SCT <- readRDS("C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/Mono.1.int.SCT.rds")
+
+Idents(Mono.1.int.SCT) <- "integrated_snn_res.0.3"
+
+#Cluster0 - Classical monocytes
+#The file (available - cluster0_DEGs_0vs1_2_genelist.csv) has been created by taking all DEGs identified in the DEG-testing of HIV-1 vs Negative AND HIV-2 vs Negative. 
+DGE_0 <- read.csv("C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/cluster0_DEGs_0vs1_2_genelist.csv", sep=";")
+
+currCell_0 <- subset(Mono.1.int.SCT, idents = c("0"))
+Idents(currCell_0) <- "Group"
+currCell_0_subset <- subset(currCell_0, idents = c("0", "1", "2", "3"))
+currCell_0_subset$Group <- factor(currCell_0_subset$Group, levels = c("0", "3", "2", "1"), ordered = TRUE)
+
+genes_0 <- grep("RPS", DGE_0$gene, invert=TRUE, value = TRUE)
+genes_0 <- grep("RPL", genes_0, invert=TRUE, value = TRUE)
+
+DefaultAssay(currCell_0_subset) <- "SCT"
+currCell_0_subset.averageexpression <- AverageExpression(currCell_0_subset, features = genes_0, group.by = "Group_name", assays = "SCT")
+currCell_0_subset.averageexpression <- as.matrix(currCell_0_subset.averageexpression)
+
+pheatmap(currCell_0_subset.averageexpression[[1]], scale="row", features = genes_0,col=colorspace::diverge_hsv(240), cellwidth=30, fontsize_row=5, cluster_rows=TRUE, cluster_cols = FALSE, legend = TRUE)
+
+#Cluster1 - Intermediate monocytes
+DGE_1 <- read.csv("C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/cluster1_DEGs_0vs1_2_genelist.csv", sep=";")
+
+Idents(Mono.1.int.SCT) <- "integrated_snn_res.0.3"
+
+currCell_1 <- subset(Mono.1.int.SCT, idents = c("1"))
+Idents(currCell_1) <- "Group"
+currCell_1_subset <- subset(currCell_1, idents = c("0", "1", "2", "3"))
+currCell_1_subset$Group <- factor(currCell_1_subset$Group, levels = c("0", "3", "2", "1"), ordered = TRUE)
+
+genes_1 <- grep("RPS", DGE_1$gene, invert=TRUE, value = TRUE)
+genes_1 <- grep("RPL", genes_1, invert=TRUE, value = TRUE)
+
+DefaultAssay(currCell_1_subset) <- "SCT"
+currCell_1_subset.averageexpression <- AverageExpression(currCell_1_subset, features = genes_1, group.by = "Group_name", assays = "SCT")
+currCell_1_subset.averageexpression <- as.matrix(currCell_1_subset.averageexpression)
+
+pheatmap(currCell_1_subset.averageexpression[[1]], scale="row", features = genes_1,col=colorspace::diverge_hsv(240), cellwidth=30, fontsize_row=5, cluster_rows=TRUE, cluster_cols = FALSE, legend = TRUE)
+
+#Cluster2 - non-classical monocytes
+DGE_2 <- read.csv("C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/cluster2_DEGs_0vs1_2_genelist.csv", sep=";")
+
+Idents(Mono.1.int.SCT) <- "integrated_snn_res.0.3"
+
+currCell_2 <- subset(Mono.1.int.SCT, idents = c("2"))
+Idents(currCell_2) <- "Group"
+currCell_2_subset <- subset(currCell_2, idents = c("0", "1", "2", "3"))
+currCell_2_subset$Group <- factor(currCell_2_subset$Group, levels = c("0", "3", "2", "1"), ordered = TRUE)
+
+
+genes_2 <- grep("RPS", DGE_2$gene, invert=TRUE, value = TRUE)
+genes_2 <- grep("RPL", genes_2, invert=TRUE, value = TRUE)
+
+DefaultAssay(currCell_2_subset) <- "SCT"
+currCell_2_subset.averageexpression <- AverageExpression(currCell_2_subset, features = genes_2, group.by = "Group_name", assays = "SCT")
+currCell_2_subset.averageexpression <- as.matrix(currCell_2_subset.averageexpression)
+
+pheatmap(currCell_2_subset.averageexpression[[1]], scale="row", features = genes_2,col=colorspace::diverge_hsv(240), cellwidth=30, fontsize_row=5, cluster_rows=TRUE, cluster_cols = FALSE, legend = TRUE)
