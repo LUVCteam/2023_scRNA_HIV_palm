@@ -1,1 +1,229 @@
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+library(readr)
+library(sctransform)
+library(CellChat)
 
+#Load and transpose  output files from BD Rhapsody pipeline in Seven Bridges genomics
+Samples_expression <- read.table("C:/Sequencing/SevenBridges_analysis__1/Library_1_DBEC_MolsPerCell.csv", sep = ",", header = TRUE, row.names=1)
+
+Samples_expression_tp <- data.frame(t(Samples_expression), check.names = FALSE)
+
+#create Seurat objects and 2 assays, RNA and ADT
+#The number below (1:30) refers to the number of AbSeqs (antibodies) the assay included.
+ADT <- Samples_expression_tp[c(1:30),]
+RNA <- Samples_expression_tp[c(31:length(rownames(Samples_expression_tp))),]
+All_cells_1 <- CreateSeuratObject(counts = RNA)
+Assays(All_cells_1)
+adt_assay_1 <- CreateAssayObject((counts = ADT))
+All_cells_1[["ADT"]] <- adt_assay_1
+Assays(All_cells_1)
+All_cells_1
+
+#Add metadata for Sample Tags, Sample Name and Cell Type Experimental (the latter Based on antibody expression)
+sample_tag_calls <- read.table("C:/Sequencing/SevenBridges_analysis_1/Library_1_Sample_Tag_Calls.csv", skip = 0, sep = ",", header = TRUE, row.names = 1)
+All_cells_1 = AddMetaData(object = All_cells_1, metadata = sample_tag_calls)
+
+Exp_cell_type <- read.table("C:/Sequencing/SevenBridges_analysis_1/Library_1_cell_type_experimental.csv", skip = 0, sep = ",", header = TRUE, row.names = 1)
+rep_1 = AddMetaData(object = rep_1, metadata = Exp_cell)
+
+#Condition - This has been added by myself manually. Open the Samples_tag_calls in excel and use the find/replace function in this file to add information about HIV-group (0 = neg, 1 = HIv-1, 2 = HIv-2 viremic, 3 = HIV-2 aviremic) and condition (Uninfected and Infected)
+Samples_condition_meta <- read.table("C:/Angelica/Sequencing/220414/SevenBridges_analysis_220427/Pilot1-220413_Conditions_AP.csv", skip = 0, sep = ",", header = TRUE, row.names = 1)
+All_cells_1 = AddMetaData(object = All_cells_1, metadata = Samples_condition_meta)
+
+#Add library number to metadata
+All_cells_1$library = "1"
+
+#Specifying MT and RB genes
+All_cells_1[["percent.mt"]] <- PercentageFeatureSet(All_cells_1,pattern = "^MT.")
+All_cells_1[["percent.rb"]] <- PercentageFeatureSet(All_cells_1, pattern = "^RP[LS]")
+
+#Repeat above for all 4 libraries individually
+#------------------------------------------------------------------------------------
+
+#Merge all libraries to one Seurat object
+All_lib_all_cells <- merge(All_cells_1, y = c(All_cells_2, All_cells_3, All_cells_4), add.cell.ids = c("1", "2", "3", "4"))
+
+#Specify HB genes 
+All_lib_all_cells[["percent.hb"]] <- PercentageFeatureSet(All_lib_all_cells, pattern = "^HB[^(P)]")
+
+
+#-------------------------------------------------------------------------------------
+
+#Filter cells
+#Selec genes expressed in a minimum of 3 cells
+selected_genes <- rownames(All_lib_all_cells)[Matrix::rowSums(All_lib_all_cells) > 3]
+All_lib_all_cells[["RNA"]] <- CreateAssayObject(counts = All_lib_all_cells[["RNA"]]@counts[selected_genes , ])
+
+#Select cells expressing more than 200 genes
+selected_c <- WhichCells(All_lib_all_cells, expression = nFeature_RNA > 200)
+data.filt <- subset(All_lib_all_cells, cells = selected_c)
+
+saveRDS(data.filt, file = "C:/Filtered_cells/data.filt.rds")
+
+#Exclude cells with more than 30% MT, more than 2% HB and less than 4% RB. 
+data.filt.1 <- subset(data.filt, subset = percent.mt < 30 & percent.rb > 4 & percent.hb < 2)
+
+#Remove Undetermined cells (i.e. cells that have not been assigned to a sample tag)
+data.filt.1 <- subset(data.filt.1, subset = Sample_Name == "Undetermined", invert = TRUE)
+
+#One cell from Library 3 was called from SampleTag02_hs.
+#This sample tag was not used in that library prep --> this cell was excluded. 
+data.filt.1 <- subset(data.filt.1, subset = Sample_Name == "SampleTag02_hs", invert = TRUE)
+
+dim(data.filt.1)
+
+saveRDS(data.filt.1, file = "C:/Filtered_cells/data.filt.1.rds")
+
+
+#Normalize the datasets - make sure the right assay is the default one.
+DefaultAssay(data.filt.1) <- "RNA"
+data.filt.1 = NormalizeData(data.filt.1)
+data.filt.1 <- FindVariableFeatures(data.filt.1, selection.method = "vst", nfeatures = 2000)
+top10variable <- head(VariableFeatures(data.filt.1), 100)
+top10variable
+VariableFeaturePlot <- VariableFeaturePlot(data.filt.1)
+VariableFeaturePlot
+VariableFeaturePlotWithLabels <- LabelPoints(plot = VariableFeaturePlot, points = top10variable, repel = TRUE, xnudge = 0, ynudge = 0)
+VariableFeaturePlotWithLabels
+all.genes <- rownames(data.filt.1)
+data.filt.1 = ScaleData(data.filt.1, features = all.genes, model.use = "linear")
+data.filt.1 = RunPCA(data.filt.1, features = VariableFeatures(object=data.filt.1), verbose = F)
+print(data.filt.1[["pca"]], dims = 1:5, nFeatures = 5)
+VizDimLoadings(data.filt.1, dims = 1:2, reduction = "pca")
+DimPlot(data.filt.1, reduction = "pca")
+DimHeatmap(data.filt.1, dims = 1, cells = 500, balanced = TRUE)
+data.filt.1 <- JackStraw(data.filt.1, num.replicate = 100)
+data.filt.1 <- ScoreJackStraw(data.filt.1, dims = 1:20)
+JackStrawPlot(data.filt.1, dims = 1:20)
+ElbowPlot(data.filt.1)
+
+#Determine how many PCs to include in downstream analysis: https://hbctraining.github.io/scRNA-seq/lessons/elbow_plot_metric.html
+pct <- data.filt.1[["pca"]]@stdev / sum(data.filt.1[["pca"]]@stdev) * 100
+cumu <- cumsum(pct)
+co1 <- which(cumu > 90 & pct < 5)[1]
+co1
+co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > 0.1), decreasing = T)[1] + 1
+co2
+
+#Based on above, proceed with 14 PCs)
+data.filt.1 <- FindNeighbors(data.filt.1, dims = 1:14)
+data.filt.1 <- FindClusters(data.filt.1, resolution = 0.5)
+data.filt.1 <- RunUMAP(data.filt.1, dims = 1:14)
+DimPlot(data.filt.1, reduction = "umap")
+DimPlot(data.filt.1, reduction = "umap", group.by = "Sample_Name")
+DimPlot(data.filt.1, reduction = "umap", group.by = "Group")
+DimPlot(data.filt.1, reduction = "umap", group.by = "Cell_Type_Experimental", label = TRUE, repel = TRUE)
+
+#Cells called as multiplets cluster intermixed --> Remove Multiplets
+data.filt.2 <- subset(data.filt.1, subset = Sample_Name == "Multiplet", invert = TRUE)
+
+saveRDS(data.filt.2, file = "C:/Filtered_cells/data.filt.2.rds")
+
+#Plot nFeatures to nCount to have a look at potential "outliers" --> Filter out cells expressing more than 3250 genes.
+FeatureScatter(data.filt.2, feature1 = "nCount_RNA", feature2 = "nFeature_RNA", group.by = "Group") + geom_hline(yintercept = 3250)
+
+data.filt.3 <- subset(data.filt.2, subset = nFeature_RNA < 3250)
+
+saveRDS(data.filt.3, file = "C:/Filtered_cells/data.filt.3.rds")
+
+#Integrate datasets based on reference dataset using SCTransform (satijalab.org/seurat/archive/v3.1/integration.html)
+DefaultAssay(data.filt.3) <- "RNA"
+data.filt.3.list.SCT <- SplitObject(data.filt.3, split.by = "Sample_Name")
+
+for (i in names(data.filt.3.list.SCT)) {
+  data.filt.3.list.SCT[[i]] <- SCTransform(data.filt.3.list.SCT[[i]], verbose = FALSE)
+}
+
+data.filt.3.features.SCT <- SelectIntegrationFeatures(object.list = data.filt.3.list.SCT, nfeatures = 3000)
+data.filt.3.list.SCT <- PrepSCTIntegration(object.list = data.filt.3.list.SCT, anchor.features = data.filt.3.features.SCT)
+
+#Set the individual with the highest cell count as reference 
+reference.dataset.SCT <- which(names(data.filt.3.list.SCT) == "HIV-1_2")
+
+data.filt.3.SCT.anchors <- FindIntegrationAnchors(object.list = data.filt.3.list.SCT, normalization.method = "SCT", anchor.features = data.filt.3.features.SCT, reference = reference.dataset.SCT)
+data.filt.3.int.SCT <- IntegrateData(anchorset = data.filt.3.SCT.anchors, normalization.method = "SCT")
+data.filt.3.int.SCT <- RunPCA(object = data.filt.3.int.SCT, verbose = FALSE, reduction.name = "pca_int_SCT")
+DimPlot(data.filt.3.int.SCT, reduction = "pca_int_SCT")
+print(data.filt.3.int.SCT[["pca_int_SCT"]], dims = 1:5, nFeatures = 5)
+VizDimLoadings(data.filt.3.int.SCT, dims = 1:2, reduction = "pca_int_SCT")
+DimHeatmap(data.filt.3.int.SCT, dims = 1:5, cells = 500, balanced = TRUE, reduction = "pca_int_SCT")
+
+ElbowPlot(data.filt.3.int.SCT, reduction = "pca_int_SCT")
+
+#Determine how many PCs to include in downstream analysis: https://hbctraining.github.io/scRNA-seq/lessons/elbow_plot_metric.html
+pct.sct <- data.filt.3.int.SCT[["pca_int_SCT"]]@stdev / sum(data.filt.3.int.SCT[["pca_int_SCT"]]@stdev) * 100
+cumu <- cumsum(pct.sct)
+co1 <- which(cumu > 90 & pct.sct < 5)[1]
+co1
+co2 <- sort(which((pct.sct[1:length(pct.sct)-1] - pct.sct[2:length(pct.sct)]) > 0.1), decreasing = T)[1] + 1
+co2
+
+#Based on above proceed with 18 dimenions. Resolution 0.6
+data.filt.3.int.SCT <- FindNeighbors(data.filt.3.int.SCT, dims = 1:18, reduction = "pca_int_SCT")
+data.filt.3.int.SCT <- FindClusters(data.filt.3.int.SCT, resolution = 0.6)
+data.filt.3.int.SCT <- RunUMAP(object = data.filt.3.int.SCT, dims = 1:18, reduction = "pca_int_SCT", reduction.name = "umap_dim18_res0.6")
+DimPlot(data.filt.3.int.SCT, reduction = "umap_dim18_res0.6") + ggtitle("data.filt.3.int.SCT_umap_dims18_res0.6")
+DimPlot(data.filt.3.int.SCT, group.by = "Cell_Type_Experimental", reduction = "umap_dim18_res0.6")
+DimPlot(data.filt.3.int.SCT, group.by = "Sample_Name", reduction = "umap_dim18_res0.6")
+
+table(data.filt.3.int.SCT$integrated_snn_res.0.6, data.filt.3.int.SCT$Group)
+table1 <- table(data.filt.3.int.SCT$integrated_snn_res.0.6, data.filt.3.int.SCT$Group)
+write.csv(table1, file = "C:/Filtered_cells/SCT_integration/Dims18_res0.6/cells.per.cluster.per.group.csv")
+
+prop.table(table(Idents(data.filt.3.int.SCT), data.filt.3.int.SCT$Group), margin = 2)
+table2 <- prop.table(table(Idents(data.filt.3.int.SCT), data.filt.3.int.SCT$Group))
+write.csv(table2, file = "C:/Filtered_cells/SCT_integration/Dims18_res0.6/cell_freq.per.cluster.per.group.csv")
+
+saveRDS(data.filt.3.int.SCT, file = "C:/Filtered_cells/SCT_integration/Dims18_res0.6/data.filt.3.int.SCT.rds")
+
+data.filt.3.int.SCT <- SetIdent(data.filt.3.int.SCT, value = data.filt.3.int.SCT@meta.data$integrated_snn_res.0.6)
+
+new.cluster.ids <- c("NK", "CD3 T", "CD3 T", "Mono", "CD3 T", "CD3 T", "Mono", "CD19 B", "Mono", "CD19 B", "NK", "CD3 T", "DC", "Undefined", "CD3 T", "Mono", "Mono")
+names(new.cluster.ids) <- levels(data.filt.3.int.SCT)
+data.filt.3.int.SCT <- RenameIdents(data.filt.3.int.SCT, new.cluster.ids)
+data.filt.3.int.SCT$Main_celltype <- Idents(data.filt.3.int.SCT)
+
+DimPlot(data.filt.3.int.SCT, reduction = "umap_dim18_res0.6", group.by = "Main_celltype") + ggtitle("Main cell types")
+DimPlot(data.filt.3.int.SCT, reduction = "umap_dim18_res0.6", group.by = "Main_celltype", split.by = "Group") + ggtitle("Main cell types")
+DimPlot(data.filt.3.int.SCT, reduction = "umap_dim18_res0.6", group.by = "Group")
+
+Idents(data.filt.3.int.SCT) <- "Group"
+subset_0 <- subset(data.filt.3.int.SCT, idents = c("0"))
+DimPlot(subset_0, reduction = "umap_dim18_res0.6", group.by = "Main_celltype")
+subset_1 <- subset(data.filt.3.int.SCT, idents = c("1"))
+DimPlot(subset_1, reduction = "umap_dim18_res0.6", group.by = "Main_celltype")
+subset_2 <- subset(data.filt.3.int.SCT, idents = c("2"))
+DimPlot(subset_2, reduction = "umap_dim18_res0.6", group.by = "Main_celltype")
+subset_3 <- subset(data.filt.3.int.SCT, idents = c("3"))
+DimPlot(subset_3, reduction = "umap_dim18_res0.6", group.by = "Main_celltype")
+
+DefaultAssay(data.filt.3.int.SCT) <- "ADT"
+VariableFeatures(data.filt.3.int.SCT) <- rownames(data.filt.3.int.SCT[["ADT"]])
+data.filt.3.int.SCT = NormalizeData(data.filt.3.int.SCT, normalization.method = "CLR", margin = 2)
+data.filt.3.int.SCT = ScaleData(data.filt.3.int.SCT)
+Idents(data.filt.3.int.SCT) <- "Main_celltype"
+
+features <- c("CD11c.B.LY6.ITGAX.AHS0056.pAbO",	"CD14.MPHIP9.CD14.AHS0037.pAbO",	"CD16.3G8.FCGR3A.AHS0053.pAbO",	"CD19.SJ25C1.CD19.AHS0030.pAbO",	"CD3.UCHT1.CD3E.AHS0231.pAbO",	"CD4.SK3.CD4.AHS0032.pAbO",	"CD8.SK1.CD8A.AHS0228.pAbO")
+DotPlot(data.filt.3.int.SCT, features = features) + RotatedAxis()
+DoHeatmap(subset(data.filt.3.int.SCT, downsample = 100), features = features, size = 3, raster = FALSE)
+StackedVlnPlot(data.filt.3.int.SCT, features = features, colors.ggplot = TRUE) 
+
+DefaultAssay(data.filt.3.int.SCT) <- "RNA"
+data.filt.3.int.SCT = NormalizeData(data.filt.3.int.SCT)
+data.filt.3.int.SCT <- FindVariableFeatures(data.filt.3.int.SCT, selection.method = "vst", nfeatures = 2000)
+top10variable <- head(VariableFeatures(data.filt.3.int.SCT), 100)
+top10variable
+VariableFeaturePlot <- VariableFeaturePlot(data.filt.3.int.SCT)
+VariableFeaturePlot
+VariableFeaturePlotWithLabels <- LabelPoints(plot = VariableFeaturePlot, points = top10variable, repel = TRUE, xnudge = 0, ynudge = 0)
+VariableFeaturePlotWithLabels
+all.genes <- rownames(data.filt.3.int.SCT)
+data.filt.3.int.SCT = ScaleData(data.filt.3.int.SCT, features = all.genes, model.use = "linear")
+
+features_RNA <- c("ITGAX",	"CD14",	"FCGR3A",	"CD19",	"CD3E",	"CD4",	"CD8A")
+DotPlot(data.filt.3.int.SCT, features = features_RNA) + RotatedAxis()
+DoHeatmap(subset(data.filt.3.int.SCT, downsample = 100), features = features_RNA, size = 3)
+
+saveRDS(data.filt.3.int.SCT, file = "C:/Filtered_cells/SCT_integration/Dims18_res0.6/data.filt.3.int.SCT.rds")
