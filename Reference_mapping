@@ -1,0 +1,74 @@
+library(Seurat)
+library(Azimuth)
+
+DefaultAssay(data.filt.3.int.SCT) <- "RNA"
+data.filt.3.int.SCT <- RunAzimuth(data.filt.3.int.SCT, reference = "pbmcref")
+
+DimPlot(data.filt.3.int.SCT, reduction = "ref.umap", group.by = "predicted.celltype.l2", label = TRUE, label.size = 3) + NoLegend()
+
+#Plot main (l1 labels) and fine (l2 labels) celltypes  on UMAP
+DimPlot(data.filt.3.int.SCT, reduction = "umap_dim18_res0.6", group.by = "predicted.celltype.l1", label = TRUE)
+DimPlot(data.filt.3.int.SCT, reduction = "umap_dim18_res0.6", group.by = "predicted.celltype.l2", label = TRUE)
+
+
+#Plot main cell types (l2) on UMAP
+DimPlot(Mono.1.int.SCT, reduction = "umap_dim17_res0.3", group.by = "predicted.celltype.l1", label = TRUE)
+DimPlot(B.cells.1.int.SCT, reduction = "umap_dim13_res0.6", group.by = "predicted.celltype.l1", label = TRUE)
+DimPlot(T.cells.1.int.SCT, reduction = "wnn.umap_dim10_res0.6", group.by = "predicted.celltype.l1", label = TRUE)
+
+#Plot fine cell types (l2) on subsets
+DimPlot(Mono.1.int.SCT, reduction = "umap_dim17_res0.3", group.by = "predicted.celltype.l2", label = TRUE)
+DimPlot(B.cells.1.int.SCT, reduction = "umap_dim13_res0.6", group.by = "predicted.celltype.l2", label = TRUE)
+DimPlot(T.cells.1.int.SCT, reduction = "wnn.umap_dim10_res0.6", group.by = "predicted.celltype.l2", label = TRUE)
+
+table <- table(data.filt.3.int.SCT$predicted.celltype.l2,data.filt.3.int.SCT$Group)
+write.csv(table, file = "C:/Filtered_cells/SCT_integration/Azimuth/cells.per.monaco.cell.type.per.group.csv")
+
+#Reference mapping using SingleR and the Monaco Immune database reference data
+library(celldex)
+library(scater)
+library(SingleR)
+library(dplyr)
+library(tidyr)
+
+data.filt.3.int.SCT@meta.data
+
+#Load reference data
+ref <- MonacoImmuneData()
+
+#Predicts main labels and add to seurat object as celltype_monaco
+pred <- SingleR(test=GetAssayData(data.filt.3.int.SCT,slot="data",assay="RNA"),ref=ref,labels=ref$label.main)
+cty <- pred$pruned.labels
+names(cty) <- rownames(pred)
+data.filt.3.int.SCT$celltype_monaco <- cty
+
+#Predicts fine labels and add to seurat object as cellsubtype_monaco
+pred <- SingleR(test=GetAssayData(data.filt.3.int.SCT,slot="data",assay="RNA"),ref=ref,labels=ref$label.fine)
+cty <- pred$pruned.labels
+names(cty) <- rownames(pred)
+data.filt.3.int.SCT$cellsubtype_monaco <- cty
+
+#Tabulate results for overview
+as.data.frame(table(data.filt.3.int.SCT$celltype_monaco))
+as.data.frame(table(data.filt.3.int.SCT$celltype_monaco,data.filt.3.int.SCT$Group)) %>% pivot_wider(names_from="Var2",values_from="Freq")
+as.data.frame(table(data.filt.3.int.SCT$cellsubtype_monaco))
+as.data.frame(table(data.filt.3.int.SCT$cellsubtype_monaco,data.filt.3.int.SCT$Group)) %>% pivot_wider(names_from="Var2",values_from="Freq")
+table(data.filt.3.int.SCT$Sample_Name, data.filt.3.int.SCT$cellsubtype_monaco)
+
+table <- table(data.filt.3.int.SCT$cellsubtype_monaco,data.filt.3.int.SCT$Group)
+write.csv(table, file = "C:/Filtered_cells/SCT_integration/Monaco/cells.per.monaco.cell.type.per.group.csv")
+
+#Plot main and fine celltypes on umaps
+DimPlot(data.filt.3.int.SCT, reduction = "umap_dim18_res0.6", group.by = "celltype_monaco", label = TRUE)
+DimPlot(data.filt.3.int.SCT, reduction = "umap_dim18_res0.6", group.by = "cellsubtype_monaco", label = TRUE)
+
+
+#Plot main celltypes on subsets
+DimPlot(Mono.1.int.SCT, reduction = "umap_dim17_res0.3", group.by = "celltype_monaco", label = TRUE)
+DimPlot(B.cells.1.int.SCT, reduction = "umap_dim13_res0.6", group.by = "celltype_monaco", label = TRUE)
+DimPlot(T.cells.1.int.SCT, reduction = "wnn.umap_dim10_res0.6", group.by = "celltype_monaco", label = TRUE)
+
+#Plot fine celltypes on subsets
+DimPlot(Mono.1.int.SCT, reduction = "umap_dim17_res0.3", group.by = "cellsubtype_monaco", label = TRUE)
+DimPlot(B.cells.1.int.SCT, reduction = "umap_dim13_res0.6", group.by = "cellsubtype_monaco", label = TRUE)
+DimPlot(T.cells.1.int.SCT, reduction = "wnn.umap_dim10_res0.6", group.by = "cellsubtype_monaco", label = TRUE)
