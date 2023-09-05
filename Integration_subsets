@@ -1,0 +1,718 @@
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(patchwork)
+library(sctransform)
+library(tidyr)
+library(CellChat)
+library(scales)
+
+data.filt.3.int.SCT <- readRDS("C:/Filtered_cells/SCT_integration/Dims18_res0.6/data.filt.3.int.SCT.rds")
+
+View(data.filt.3.int.SCT@meta.data)
+
+data.filt.3.int.SCT <- SetIdent(data.filt.3.int.SCT, value = data.filt.3.int.SCT@meta.data$integrated_snn_res.0.6)
+
+#Create myeloid subset
+Mono.1 <- subset(data.filt.3.int.SCT, idents = c("3", "6", "8", "12", "15", "16"))
+
+#Remove cells from individual presenting with a unique/outlier clustering profile in the B-cell subset.
+Mono.1 <- subset(Mono.1, subset = Sample_Name == "Neg_8", invert = TRUE)
+
+dim(data.filt.3.int.SCT)
+dim(Mono.1)
+
+#Normalize and scale data for PCA
+DefaultAssay(Mono.1) <- "RNA"
+Mono.1 = NormalizeData(Mono.1)
+Mono.1 <- FindVariableFeatures(Mono.1, selection.method = "vst", nfeatures = 2000)
+top10variable <- head(VariableFeatures(Mono.1), 100)
+top10variable
+VariableFeaturePlot <- VariableFeaturePlot(Mono.1)
+VariableFeaturePlot
+VariableFeaturePlotWithLabels <- LabelPoints(plot = VariableFeaturePlot, points = top10variable, repel = TRUE, xnudge = 0, ynudge = 0)
+VariableFeaturePlotWithLabels
+all.genes <- rownames(Mono.1)
+Mono.1 = ScaleData(Mono.1, features = all.genes, model.use = "linear")
+Mono.1 = RunPCA(Mono.1, features = VariableFeatures(object=Mono.1), verbose = F)
+print(Mono.1[["pca"]], dims = 1:5, nFeatures = 5)
+VizDimLoadings(Mono.1, dims = 1:2, reduction = "pca")
+DimPlot(Mono.1, reduction = "pca")
+DimHeatmap(Mono.1, dims = 1, cells = 500, balanced = TRUE)
+ElbowPlot(Mono.1)
+
+#Determine how many PCs to include in downstream analysis: https://hbctraining.github.io/scRNA-seq/lessons/elbow_plot_metric.html
+pct <- Mono.1[["pca"]]@stdev / sum(Mono.1[["pca"]]@stdev) * 100
+cumu <- cumsum(pct)
+co1 <- which(cumu > 90 & pct < 5)[1]
+co1
+co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > 0.1), decreasing = T)[1] + 1
+co2
+
+#Proceeding with 11 PCs)
+Mono.1 <- FindNeighbors(Mono.1, dims = 1:11)
+Mono.1 <- FindClusters(Mono.1, resolution = 0.5)
+Mono.1 <- RunUMAP(Mono.1, dims = 1:11)
+DimPlot(Mono.1, reduction = "umap")
+DimPlot(Mono.1, reduction = "umap", group.by = "Group")
+DimPlot(Mono.1, reduction = "umap", group.by = "Sample_Name")
+
+saveRDS(Mono.1, file = "C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/Mono.1.rds")
+
+#Integration of Mono subset
+DefaultAssay(Mono.1) <- "RNA"
+Mono.1.list.SCT <- SplitObject(Mono.1, split.by = "Sample_Name")
+
+for (i in names(Mono.1.list.SCT)) {
+  Mono.1.list.SCT[[i]] <- SCTransform(Mono.1.list.SCT[[i]], verbose = FALSE)
+}
+
+Mono.1.features.SCT <- SelectIntegrationFeatures(object.list = Mono.1.list.SCT, nfeatures = 3000)
+Mono.1.list.SCT <- PrepSCTIntegration(object.list = Mono.1.list.SCT, anchor.features = Mono.1.features.SCT)
+
+reference.dataset.SCT <- which(names(Mono.1.list.SCT) == "Neg_2")
+
+Mono.1.SCT.anchors <- FindIntegrationAnchors(object.list = Mono.1.list.SCT, normalization.method = "SCT", anchor.features = Mono.1.features.SCT, reference = reference.dataset.SCT)
+Mono.1.int.SCT <- IntegrateData(anchorset = Mono.1.SCT.anchors, normalization.method = "SCT")
+Mono.1.int.SCT <- RunPCA(object = Mono.1.int.SCT, verbose = FALSE, reduction.name = "pca_int_SCT")
+DimPlot(Mono.1.int.SCT, reduction = "pca_int_SCT")
+print(Mono.1.int.SCT[["pca_int_SCT"]], dims = 1:5, nFeatures = 5)
+VizDimLoadings(Mono.1.int.SCT, dims = 1:2, reduction = "pca_int_SCT")
+DimHeatmap(Mono.1.int.SCT, dims = 1:5, cells = 500, balanced = TRUE, reduction = "pca_int_SCT")
+
+ElbowPlot(Mono.1.int.SCT, reduction = "pca_int_SCT")
+pct.sct <- Mono.1.int.SCT[["pca_int_SCT"]]@stdev / sum(Mono.1.int.SCT[["pca_int_SCT"]]@stdev) * 100
+cumu <- cumsum(pct.sct)
+co1 <- which(cumu > 90 & pct.sct < 5)[1]
+co1
+co2 <- sort(which((pct.sct[1:length(pct.sct)-1] - pct.sct[2:length(pct.sct)]) > 0.1), decreasing = T)[1] + 1
+co2
+
+#Proceed with 17 dimenions. 
+Mono.1.int.SCT <- FindNeighbors(Mono.1.int.SCT, dims = 1:17, reduction = "pca_int_SCT")
+Mono.1.int.SCT <- FindClusters(Mono.1.int.SCT, resolution = 0.3)
+Mono.1.int.SCT <- RunUMAP(object = Mono.1.int.SCT, dims = 1:17, reduction = "pca_int_SCT", reduction.name = "umap_dim17_res0.3")
+DimPlot(Mono.1.int.SCT, reduction = "umap_dim17_res0.3")
+DimPlot(Mono.1.int.SCT, reduction = "umap_dim17_res0.3", group.by = "Group")
+DimPlot(Mono.1.int.SCT, reduction = "umap_dim17_res0.3", group.by = "cellsubtype_monaco")
+DimPlot(Mono.1.int.SCT, reduction = "umap_dim17_res0.3", group.by = "predicted.celltype.l2")
+
+View(Mono.1.int.SCT@meta.data)
+table(Mono.1.int.SCT$integrated_snn_res.0.3, Mono.1.int.SCT$Group)
+table(Mono.1.int.SCT$integrated_snn_res.0.3, Mono.1.int.SCT$Sample_Name)
+
+table1 <- table(Mono.1.int.SCT$integrated_snn_res.0.3, Mono.1.int.SCT$Group)
+write.csv(table1, file = "C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/cell.per.cluster.per.group.csv")
+
+table2 <- table(Mono.1.int.SCT$integrated_snn_res.0.3, Mono.1.int.SCT$Sample_Name)
+write.csv(table2, file = "C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/cell.per.cluster.per.sample.csv")
+
+saveRDS(Mono.1.int.SCT, file = "C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/Mono.1.int.SCT.rds")
+
+#Plots of RNA and Protein expression, and vizualization based on reference mapping.
+DefaultAssay(Mono.1.int.SCT) <- "RNA"
+Mono.1.int.SCT = NormalizeData(Mono.1.int.SCT)
+Mono.1.int.SCT <- FindVariableFeatures(Mono.1.int.SCT, selection.method = "vst", nfeatures = 2000)
+top10variable <- head(VariableFeatures(Mono.1.int.SCT), 100)
+top10variable
+VariableFeaturePlot <- VariableFeaturePlot(Mono.1.int.SCT)
+VariableFeaturePlot
+VariableFeaturePlotWithLabels <- LabelPoints(plot = VariableFeaturePlot, points = top10variable, repel = TRUE, xnudge = 0, ynudge = 0)
+VariableFeaturePlotWithLabels
+all.genes <- rownames(Mono.1.int.SCT)
+Mono.1.int.SCT = ScaleData(Mono.1.int.SCT, features = all.genes, model.use = "linear")
+
+FeaturePlot(Mono.1.int.SCT, features = "FCGR3A", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD14", reduction = "umap_dim17_res0.3", split.by = "Group")
+
+Mono.1.int.SCT <- SetIdent(Mono.1.int.SCT, value = Mono.1.int.SCT@meta.data$integrated_snn_res.0.3)
+
+features_RNA <- c("NKTR", "MX1", "IFIT2", "FCER1A", "CD3E", "TRBC2", "FCGR3A", "S100A8", "VCAN", "CD14", "ITGAX")
+
+DotPlot(Mono.1.int.SCT, features = features_RNA) + RotatedAxis()
+DoHeatmap(subset(Mono.1.int.SCT, downsample = 100), features = features_RNA, size = 3)
+
+StackedVlnPlot(Mono.1.int.SCT, features = features_RNA, colors.ggplot = TRUE) 
+
+
+#Expression of the 30 analyzed antibodies
+DefaultAssay(Mono.1.int.SCT) <- "ADT"
+VariableFeatures(Mono.1.int.SCT) <- rownames(Mono.1.int.SCT[["ADT"]])
+Mono.1.int.SCT = NormalizeData(Mono.1.int.SCT, normalization.method = "CLR", margin = 2)
+Mono.1.int.SCT = ScaleData(Mono.1.int.SCT)
+
+FeaturePlot(Mono.1.int.SCT, features = "IgM.IGHM.AHS0198.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "Tim3.HAVCR2.AHS0016.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "IgD.IGHD.AHS0058.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "HLA.DR.CD74.AHS0035.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "GITR.TNFRSF18.AHS0104.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CXCR6.CXCR6.AHS0148.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CXCR5.CXCR5.AHS0039.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD8.SK1.CD8A.AHS0228.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD62L.DREG.56.SELL.AHS0049.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD56.NCAM16.2.NCAM1.AHS0019.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD4.SK3.CD4.AHS0032.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD45RA.HI100.PTPRC.AHS0009.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD3.UCHT1.CD3E.AHS0231.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD28.L293.CD28.AHS0138.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD27.M.T271.CD27.AHS0025.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD279.EH12.1.PDCD1.AHS0014.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD278.ICOS.AHS0012.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD272.BTLA.AHS0052.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD25.2A3.IL2RA.AHS0026.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD19.SJ25C1.CD19.AHS0030.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD196.CCR6.AHS0034.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD183.CXCR3.AHS0031.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD16.3G8.FCGR3A.AHS0053.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD161.HP.3G10.KLRB1.AHS0205.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD14.MPHIP9.CD14.AHS0037.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD137.TNFRSF9.AHS0003.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD134.ACT35.TNFRSF4.AHS0013.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD127.IL7R.AHS0028.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CD11c.B.LY6.ITGAX.AHS0056.pAbO", reduction = "umap_dim17_res0.3")
+FeaturePlot(Mono.1.int.SCT, features = "CCR7.CCR7.AHS0273.pAbO", reduction = "umap_dim17_res0.3")
+
+
+#FindMarkers analysis for cluster annotation
+Mono.1.int.SCT <- readRDS("C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/Mono.1.int.SCT.rds")
+
+DefaultAssay(Mono.1.int.SCT) <- "RNA"
+Mono.1.int.SCT <- NormalizeData(Mono.1.int.SCT)
+
+#Set ident to test for differences in specific clusters. 
+Mono.1.int.SCT <- SetIdent(Mono.1.int.SCT, value = Mono.1.int.SCT@meta.data$integrated_snn_res.0.3)
+
+#Cluster 0
+cluster0.markers <- FindMarkers(Mono.1.int.SCT, ident.1 = 0, min.pct = 0.25)
+head(cluster0.markers, n = 10)
+write.csv(cluster0.markers, "C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/cluster0_markers.csv")
+
+
+#Repeat above for all clusters.
+
+#Identify DEGs between groups for the different myeloid subpopulations.
+#Add metadata column to be able to test for differences between study groups
+Mono.1.int.SCT$integrated_snn_res.0.3.group <- paste(Idents(Mono.1.int.SCT), Mono.1.int.SCT$Group, sep = "_")
+
+Mono.1.int.SCT <- SetIdent(Mono.1.int.SCT, value = Mono.1.int.SCT@meta.data$integrated_snn_res.0.3.group)
+
+#Identify DEGs between HIV-1 viremic and HIV-negative in Cluster0
+cluster0_1vs0_0.58 <- FindMarkers(Mono.1.int.SCT, ident.1 = "0_1", ident.2 = "0_0", verbose = FALSE, logfc.threshold = 0.58)
+head(cluster0_1vs0_0.58)
+write.csv(cluster0_1vs0_0.58, "C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/cluster0_1vs0_0.58.csv")
+
+#Repeat above for all clusters
+
+#Identify DEGs between HIV-2 viremic and HIV-negative in Cluster1
+cluster1_2vs0_0.58 <- FindMarkers(Mono.1.int.SCT, ident.1 = "1_2", ident.2 = "1_0", verbose = FALSE, logfc.threshold = 0.58)
+write.csv(cluster1_2vs0_0.58, "C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/cluster1_2vs0_0.58.csv")
+
+#Repeat above for all clusters
+
+#Identify DEGs between HIV-2 viremic and HIV-1 viremic in Cluster2
+cluster2_2vs1_0.58 <- FindMarkers(Mono.1.int.SCT, ident.1 = "2_2", ident.2 = "2_1", verbose = FALSE, logfc.threshold = 0.58)
+write.csv(cluster2_2vs1_0.58, "C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/cluster2_2vs1_0.58.csv")
+
+#Repeat above for all clusters
+
+#Identify DEGs between HIV-2 aviremic and HIV-negative in Cluster3
+cluster3_3vs0_0.58 <- FindMarkers(Mono.1.int.SCT, ident.1 = "3_3", ident.2 = "3_0", verbose = FALSE, logfc.threshold = 0.58)
+write.csv(cluster3_3vs0_0.58, "C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/cluster2_3vs0_0.58.csv")
+
+#Repeat above for all clusters
+
+#Identify DEGs between HIV-1 viremic and HIV-2 aviremic in Cluster4
+cluster4_1vs3_0.58 <- FindMarkers(Mono.1.int.SCT, ident.1 = "4_1", ident.2 = "4_3", verbose = FALSE, logfc.threshold = 0.58)
+write.csv(cluster4_1vs3_0.58, "C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/cluster4_1vs3_0.58.csv")
+
+#Repeat above for all clusters
+
+#Identify DEGs between HIV-2 viremic and HIV-2 aviremic in Cluster5
+cluster5_2vs3_0.58 <- FindMarkers(Mono.1.int.SCT, ident.1 = "5_2", ident.2 = "5_3", verbose = FALSE, logfc.threshold = 0.58)
+write.csv(cluster5_2vs3_0.58, "C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/cluster5_2vs3_0.58.csv")
+
+#Repeat above for all clusters
+
+#__________________________________________________
+
+#Create B-cell and B-like cell subset
+data.filt.3.int.SCT <- SetIdent(data.filt.3.int.SCT, value = data.filt.3.int.SCT@meta.data$integrated_snn_res.0.6)
+B.cells.1 <- subset(data.filt.3.int.SCT, idents = c("7", "9", "13"))
+
+#Remove cells from individual presenting with a unique/outlier clustering profile in the B-cell subset.
+B.cells.1 <- subset(B.cells.1, subset = Sample_Name == "Neg_8", invert = TRUE)
+
+dim(data.filt.3.int.SCT)
+dim(B.cells.1)
+
+#Normalize and scale data for PCA
+DefaultAssay(B.cells.1) <- "RNA"
+B.cells.1 = NormalizeData(B.cells.1)
+B.cells.1 <- FindVariableFeatures(B.cells.1, selection.method = "vst", nfeatures = 2000)
+top10variable <- head(VariableFeatures(B.cells.1), 100)
+top10variable
+VariableFeaturePlot <- VariableFeaturePlot(B.cells.1)
+VariableFeaturePlot
+VariableFeaturePlotWithLabels <- LabelPoints(plot = VariableFeaturePlot, points = top10variable, repel = TRUE, xnudge = 0, ynudge = 0)
+VariableFeaturePlotWithLabels
+all.genes <- rownames(B.cells.1)
+B.cells.1 = ScaleData(B.cells.1, features = all.genes, model.use = "linear")
+B.cells.1 = RunPCA(B.cells.1, features = VariableFeatures(object=B.cells.1), verbose = F)
+print(B.cells.1[["pca"]], dims = 1:5, nFeatures = 5)
+VizDimLoadings(B.cells.1, dims = 1:2, reduction = "pca")
+DimPlot(B.cells.1, reduction = "pca")
+DimHeatmap(B.cells.1, dims = 1, cells = 500, balanced = TRUE)
+ElbowPlot(B.cells.1)
+
+#Determine how many PCs to include in downstream analysis: https://hbctraining.github.io/scRNA-seq/lessons/elbow_plot_metric.html
+pct <- B.cells.1[["pca"]]@stdev / sum(B.cells.1[["pca"]]@stdev) * 100
+cumu <- cumsum(pct)
+co1 <- which(cumu > 90 & pct < 5)[1]
+co1
+co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > 0.1), decreasing = T)[1] + 1
+co2
+
+#Proceeding with 12 PCs
+B.cells.1 <- FindNeighbors(B.cells.1, dims = 1:12)
+B.cells.1 <- FindClusters(B.cells.1, resolution = 0.5)
+B.cells.1 <- RunUMAP(B.cells.1, dims = 1:12)
+B.cells.1@meta.data
+DimPlot(B.cells.1, reduction = "umap")
+DimPlot(B.cells.1, reduction = "umap", group.by = "Group")
+DimPlot(B.cells.1, reduction = "umap", group.by = "Sample_Name")
+
+saveRDS(B.cells.1.int.SCT, file = "C:/Filtered_cells/SCT_integration/Dims18_res0.6/B.cells/B.cells.1.int.SCT.rds")
+
+#Integration of B-cell and B-like cell dataset
+DefaultAssay(B.cells.1) <- "RNA"
+B.cells.1.list.SCT <- SplitObject(B.cells.1, split.by = "Sample_Name")
+
+for (i in names(B.cells.1.list.SCT)) {
+  B.cells.1.list.SCT[[i]] <- SCTransform(B.cells.1.list.SCT[[i]], verbose = FALSE)
+}
+
+B.cells.1.features.SCT <- SelectIntegrationFeatures(object.list = B.cells.1.list.SCT, nfeatures = 3000)
+B.cells.1.list.SCT <- PrepSCTIntegration(object.list = B.cells.1.list.SCT, anchor.features = B.cells.1.features.SCT)
+
+#Choose the HIV-negative individual with the highest cell count
+reference.dataset.SCT <- which(names(B.cells.1.list.SCT) == "Neg_5")
+
+B.cells.1.SCT.anchors <- FindIntegrationAnchors(object.list = B.cells.1.list.SCT, normalization.method = "SCT", anchor.features = B.cells.1.features.SCT, reference = reference.dataset.SCT)
+B.cells.1.int.SCT <- IntegrateData(anchorset = B.cells.1.SCT.anchors, normalization.method = "SCT", k.weight = 79)
+B.cells.1.int.SCT <- RunPCA(object = B.cells.1.int.SCT, verbose = FALSE, reduction.name = "pca_int_SCT")
+DimPlot(B.cells.1.int.SCT, reduction = "pca_int_SCT")
+print(B.cells.1.int.SCT[["pca_int_SCT"]], dims = 1:5, nFeatures = 5)
+VizDimLoadings(B.cells.1.int.SCT, dims = 1:2, reduction = "pca_int_SCT")
+DimHeatmap(B.cells.1.int.SCT, dims = 1:5, cells = 500, balanced = TRUE, reduction = "pca_int_SCT")
+
+ElbowPlot(B.cells.1.int.SCT, reduction = "pca_int_SCT")
+pct.sct <- B.cells.1.int.SCT[["pca_int_SCT"]]@stdev / sum(B.cells.1.int.SCT[["pca_int_SCT"]]@stdev) * 100
+cumu <- cumsum(pct.sct)
+co1 <- which(cumu > 90 & pct.sct < 5)[1]
+co1
+co2 <- sort(which((pct.sct[1:length(pct.sct)-1] - pct.sct[2:length(pct.sct)]) > 0.1), decreasing = T)[1] + 1
+co2
+
+#Proceed with 13 dimenions. 
+B.cells.1.int.SCT <- FindNeighbors(B.cells.1.int.SCT, dims = 1:13, reduction = "pca_int_SCT")
+B.cells.1.int.SCT <- FindClusters(B.cells.1.int.SCT, resolution = 0.6)
+B.cells.1.int.SCT <- RunUMAP(object = B.cells.1.int.SCT, dims = 1:13, reduction = "pca_int_SCT", reduction.name = "umap_dim13_res0.6")
+DimPlot(B.cells.1.int.SCT, reduction = "umap_dim13_res0.6")
+DimPlot(B.cells.1.int.SCT, group.by = "Sample_Name", reduction = "umap_dim13_res0.6")
+DimPlot(B.cells.1.int.SCT, group.by = "Group", reduction = "umap_dim13_res0.6")
+
+table1 <- table(B.cells.1.int.SCT$integrated_snn_res.0.6, B.cells.1.int.SCT$Group)
+write.csv(table1, file = "C:/Filtered_cells/SCT_integration/Dims18_res0.6/B.cells/cell.per.cluster.per.group.csv")
+
+table2 <- table(B.cells.1.int.SCT$integrated_snn_res.0.6, B.cells.1.int.SCT$Sample_Name)
+write.csv(table2, file = "C:/Filtered_cells/SCT_integration/Dims18_res0.6/B.cells/cell.per.cluster.per.sample.csv")
+
+saveRDS(B.cells.1.int.SCT, file = "C:/Filtered_cells/SCT_integration/Dims18_res0.6/B.cells/B.cells.1.int.SCT.rds")
+
+#Plots of RNA and Protein expression, and vizualization based on reference mapping.
+DefaultAssay(B.cells.1.int.SCT) <- "RNA"
+B.cells.1.int.SCT = NormalizeData(B.cells.1.int.SCT)
+B.cells.1.int.SCT <- FindVariableFeatures(B.cells.1.int.SCT, selection.method = "vst", nfeatures = 2000)
+top10variable <- head(VariableFeatures(B.cells.1.int.SCT), 100)
+top10variable
+VariableFeaturePlot <- VariableFeaturePlot(B.cells.1.int.SCT)
+VariableFeaturePlot
+VariableFeaturePlotWithLabels <- LabelPoints(plot = VariableFeaturePlot, points = top10variable, repel = TRUE, xnudge = 0, ynudge = 0)
+VariableFeaturePlotWithLabels
+all.genes <- rownames(B.cells.1.int.SCT)
+B.cells.1.int.SCT = ScaleData(B.cells.1.int.SCT, features = all.genes, model.use = "linear")
+
+FeaturePlot(B.cells.1.int.SCT, features = "CD19", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "IGHD", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD3E", reduction = "umap_dim13_res0.6")
+
+B.cells.1.int.SCT <- SetIdent(B.cells.1.int.SCT, value = B.cells.1.int.SCT@meta.data$integrated_snn_res.0.6)
+
+features_RNA <- c("MS4A1", "CD19", "CD69", "CD22",  "IGHD", "IGHM", "CD3E","SERPINF1", "IGHA1", "IGHG1", "JCHAIN")
+
+DotPlot(B.cells.1.int.SCT, features = features_RNA) + RotatedAxis()
+DoHeatmap(subset(B.cells.1.int.SCT, downsample = 100), features = features_RNA, size = 3)
+
+StackedVlnPlot(B.cells.1.int.SCT, features = features_RNA, colors.ggplot = TRUE) 
+
+#Expression of the 30 analyzed antibodies
+DefaultAssay(B.cells.1.int.SCT) <- "ADT"
+VariableFeatures(B.cells.1.int.SCT) <- rownames(B.cells.1.int.SCT[["ADT"]])
+B.cells.1.int.SCT = NormalizeData(B.cells.1.int.SCT, normalization.method = "CLR", margin = 2)
+B.cells.1.int.SCT = ScaleData(B.cells.1.int.SCT)
+
+FeaturePlot(B.cells.1.int.SCT, features = "IgM.IGHM.AHS0198.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "Tim3.HAVCR2.AHS0016.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "IgD.IGHD.AHS0058.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "HLA.DR.CD74.AHS0035.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "GITR.TNFRSF18.AHS0104.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CXCR6.CXCR6.AHS0148.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CXCR5.CXCR5.AHS0039.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD8.SK1.CD8A.AHS0228.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD62L.DREG.56.SELL.AHS0049.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD56.NCAM16.2.NCAM1.AHS0019.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD4.SK3.CD4.AHS0032.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD45RA.HI100.PTPRC.AHS0009.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD3.UCHT1.CD3E.AHS0231.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD28.L293.CD28.AHS0138.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD27.M.T271.CD27.AHS0025.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD279.EH12.1.PDCD1.AHS0014.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD278.ICOS.AHS0012.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD272.BTLA.AHS0052.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD25.2A3.IL2RA.AHS0026.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD19.SJ25C1.CD19.AHS0030.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD196.CCR6.AHS0034.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD183.CXCR3.AHS0031.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD16.3G8.FCGR3A.AHS0053.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD161.HP.3G10.KLRB1.AHS0205.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD14.MPHIP9.CD14.AHS0037.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD137.TNFRSF9.AHS0003.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD134.ACT35.TNFRSF4.AHS0013.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD127.IL7R.AHS0028.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CD11c.B.LY6.ITGAX.AHS0056.pAbO", reduction = "umap_dim13_res0.6")
+FeaturePlot(B.cells.1.int.SCT, features = "CCR7.CCR7.AHS0273.pAbO", reduction = "umap_dim13_res0.6")
+
+#FindMarkers analysis for cluster annotation
+B.cells.1.int.SCT <- readRDS("C:/Filtered_cells/SCT_integration/Dims18_res0.6/B_cells/B.cells.1.int.SCT.rds")
+
+DefaultAssay(B.cells.1.int.SCT) <- "RNA"
+B.cells.1.int.SCT <- NormalizeData(B.cells.1.int.SCT)
+
+#Set ident to test for differences in specific clusters. 
+B.cells.1.int.SCT <- SetIdent(B.cells.1.int.SCT, value = B.cells.1.int.SCT@meta.data$integrated_snn_res.0.6)
+
+#Cluster 0
+cluster0.markers <- FindMarkers(B.cells.1.int.SCT, ident.1 = 0, min.pct = 0.25)
+head(cluster0.markers, n = 10)
+write.csv(cluster0.markers, "C:/Filtered_cells/SCT_integration/Dims18_res0.6/B_cells/cluster0_markers.csv")
+
+#Repeat above for all clusters.
+
+#Identify DEGs between groups for the different myeloid subpopulations.
+#Add metadata column to be able to test for differences between study groups
+B.cells.1.int.SCT$integrated_snn_res.0.6.group <- paste(Idents(B.cells.1.int.SCT), B.cells.1.int.SCT$Group, sep = "_")
+
+B.cells.1.int.SCT <- SetIdent(B.cells.1.int.SCT, value = B.cells.1.int.SCT@meta.data$integrated_snn_res.0.6.group)
+
+#Identify DEGs between HIV-1 viremic and HIV-negative in Cluster0
+cluster0_1vs0_0.58 <- FindMarkers(B.cells.1.int.SCT, ident.1 = "0_1", ident.2 = "0_0", verbose = FALSE, logfc.threshold = 0.58, )
+head(cluster0_1vs0_0.58)
+write.csv(cluster0_1vs0_0.58, "C:/Filtered_cells/SCT_integration/Dims18_res0.6/B_cells/cluster0_1vs0_0.58.csv")
+
+#Repeat above for all clusters
+
+#Identify DEGs between HIV-2 viremic and HIV-negative in Cluster1
+cluster1_2vs0_0.58 <- FindMarkers(B.cells.1.int.SCT, ident.1 = "1_2", ident.2 = "1_0", verbose = FALSE, logfc.threshold = 0.58)
+write.csv(cluster1_2vs0_0.58, "C:/Filtered_cells/SCT_integration/Dims18_res0.6/B_cells/cluster1_2vs0_0.58.csv")
+
+#Repeat above for all clusters
+
+#Identify DEGs between HIV-2 viremic and HIV-1 viremic in Cluster2
+cluster2_2vs1_0.58 <- FindMarkers(B.cells.1.int.SCT, ident.1 = "2_2", ident.2 = "2_1", verbose = FALSE, logfc.threshold = 0.58)
+write.csv(cluster2_2vs1_0.58, "C:/Filtered_cells/SCT_integration/Dims18_res0.6/B_cells/cluster2_2vs1_0.58.csv")
+
+#Repeat above for all clusters
+
+#Repeat above for all clusters
+
+#Identify DEGs between HIV-2 aviremic and HIV-negative in Cluster3
+cluster2_3vs0_0.58 <- FindMarkers(B.cells.1.int.SCT, ident.1 = "2_3", ident.2 = "2_0", verbose = FALSE, logfc.threshold = 0.58)
+write.csv(cluster2_3vs0_0.58, "C:/Filtered_cells/SCT_integration/Dims18_res0.6/B_cells/cluster2_3vs0_0.58.csv")
+
+#Repeat above for all clusters
+
+#Identify DEGs between HIV-1 viremic and HIV-2 aviremic in Cluster4
+cluster4_1vs3_0.58 <- FindMarkers(B.cells.1.int.SCT, ident.1 = "4_1", ident.2 = "4_3", verbose = FALSE, logfc.threshold = 0.58)
+write.csv(cluster4_1vs3_0.58, "C:/Filtered_cells/SCT_integration/Dims18_res0.6/B_cells/cluster4_1vs3_0.58.csv")
+
+#Repeat above for all clusters
+
+#Identify DEGs between HIV-2 viremic and HIV-2 aviremic in Cluster5
+cluster5_2vs3_0.58 <- FindMarkers(B.cells.1.int.SCT, ident.1 = "5_2", ident.2 = "5_3", verbose = FALSE, logfc.threshold = 0.58)
+write.csv(cluster5_2vs3_0.58, "C:/Filtered_cells/SCT_integration/Dims18_res0.6/B_cells/cluster5_2vs3_0.58.csv")
+
+#Repeat above for all clusters
+
+
+
+#__________________________________________________
+
+#Create T- and NK-cell subset
+data.filt.3.int.SCT <- SetIdent(data.filt.3.int.SCT, value = data.filt.3.int.SCT@meta.data$integrated_snn_res.0.6)
+
+T.cells.1 <- subset(data.filt.3.int.SCT, idents = c("0", "1", "2", "4", "5", "10", "11", "14"))
+
+#Remove cells from individual presenting with a unique/outlier clustering profile in the B-cell subset.
+T.cells.1 <- subset(T.cells.1, subset = Sample_Name == "Neg_8", invert = TRUE)
+
+dim(data.filt.3.int.SCT)
+dim(T.cells.1)
+
+#Normalize and scale data for PCA
+T.cells.1 = NormalizeData(T.cells.1)
+T.cells.1 <- FindVariableFeatures(T.cells.1, selection.method = "vst", nfeatures = 2000)
+top10variable <- head(VariableFeatures(T.cells.1), 100)
+top10variable
+VariableFeaturePlot <- VariableFeaturePlot(T.cells.1)
+VariableFeaturePlot
+VariableFeaturePlotWithLabels <- LabelPoints(plot = VariableFeaturePlot, points = top10variable, repel = TRUE, xnudge = 0, ynudge = 0)
+VariableFeaturePlotWithLabels
+all.genes <- rownames(T.cells.1)
+T.cells.1 = ScaleData(T.cells.1, features = all.genes, model.use = "linear")
+T.cells.1 = RunPCA(T.cells.1, features = VariableFeatures(object=T.cells.1), verbose = F)
+print(T.cells.1[["pca"]], dims = 1:5, nFeatures = 5)
+VizDimLoadings(T.cells.1, dims = 1:2, reduction = "pca")
+DimPlot(T.cells.1, reduction = "pca")
+DimHeatmap(T.cells.1, dims = 1, cells = 500, balanced = TRUE)
+ElbowPlot(T.cells.1)
+
+#Determine how many PCs to include in downstream analysis: https://hbctraining.github.io/scRNA-seq/lessons/elbow_plot_metric.html
+pct <- T.cells.1[["pca"]]@stdev / sum(T.cells.1[["pca"]]@stdev) * 100
+cumu <- cumsum(pct)
+co1 <- which(cumu > 90 & pct < 5)[1]
+co1
+co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > 0.1), decreasing = T)[1] + 1
+co2
+
+#Proceeding with 12 PCs as determined above)
+T.cells.1 <- FindNeighbors(T.cells.1, dims = 1:12)
+T.cells.1 <- FindClusters(T.cells.1, resolution = 0.5)
+T.cells.1 <- RunUMAP(T.cells.1, dims = 1:12)
+DimPlot(T.cells.1, reduction = "umap")
+DimPlot(T.cells.1, reduction = "umap", group.by = "Group")
+DimPlot(T.cells.1, reduction = "umap", group.by = "Sample_Name")
+
+saveRDS(T.cells.1, file = "C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/T.cells.1.rds")
+
+#Integration of T- and NK-cell subset
+DefaultAssay(T.cells.1)
+T.cells.1.list.SCT <- SplitObject(T.cells.1, split.by = "Sample_Name")
+
+for (i in names(T.cells.1.list.SCT)) {
+  T.cells.1.list.SCT[[i]] <- SCTransform(T.cells.1.list.SCT[[i]], verbose = FALSE)
+}
+
+T.cells.1.features.SCT <- SelectIntegrationFeatures(object.list = T.cells.1.list.SCT, nfeatures = 3000)
+T.cells.1.list.SCT <- PrepSCTIntegration(object.list = T.cells.1.list.SCT, anchor.features = T.cells.1.features.SCT)
+
+reference.dataset.SCT <- which(names(T.cells.1.list.SCT) == "Neg_2")
+
+T.cells.1.SCT.anchors <- FindIntegrationAnchors(object.list = T.cells.1.list.SCT, normalization.method = "SCT", anchor.features = T.cells.1.features.SCT, reference = reference.dataset.SCT)
+T.cells.1.int.SCT <- IntegrateData(anchorset = T.cells.1.SCT.anchors, normalization.method = "SCT")
+T.cells.1.int.SCT <- RunPCA(object = T.cells.1.int.SCT, verbose = FALSE, reduction.name = "pca_int_SCT")
+DimPlot(T.cells.1.int.SCT, reduction = "pca_int_SCT")
+print(T.cells.1.int.SCT[["pca_int_SCT"]], dims = 1:5, nFeatures = 5)
+VizDimLoadings(T.cells.1.int.SCT, dims = 1:2, reduction = "pca_int_SCT")
+DimHeatmap(T.cells.1.int.SCT, dims = 1:5, cells = 500, balanced = TRUE, reduction = "pca_int_SCT")
+
+ElbowPlot(T.cells.1.int.SCT, reduction = "pca_int_SCT")
+pct.sct <- T.cells.1.int.SCT[["pca_int_SCT"]]@stdev / sum(T.cells.1.int.SCT[["pca_int_SCT"]]@stdev) * 100
+cumu <- cumsum(pct.sct)
+co1 <- which(cumu > 90 & pct.sct < 5)[1]
+co1
+co2 <- sort(which((pct.sct[1:length(pct.sct)-1] - pct.sct[2:length(pct.sct)]) > 0.1), decreasing = T)[1] + 1
+co2
+
+#Proceed with 14 dimenions. 
+T.cells.1.int.SCT <- FindNeighbors(T.cells.1.int.SCT, dims = 1:14, reduction = "pca_int_SCT")
+T.cells.1.int.SCT <- FindClusters(T.cells.1.int.SCT, resolution = 0.8)
+T.cells.1.int.SCT <- RunUMAP(object = T.cells.1.int.SCT, dims = 1:14, reduction = "pca_int_SCT", reduction.name = "umap_dim14_res0.8")
+DimPlot(T.cells.1.int.SCT, reduction = "umap_dim14_res0.8")
+DimPlot(T.cells.1.int.SCT, reduction = "umap_dim14_res0.8", group.by = "Group")
+
+saveRDS(T.cells.1.int.SCT, file = "D:/Angelica/R_JE_computer/Saved_files/QC_all_lib_all_cells/Filtered_cells/SCT_integration/Dims18_res0.6/T.cells/Excluding_P3093/T.cells.1.int.SCT.rds")
+
+#Repeat normalization and scaling for ADT assay before performing the weighted RNA and ADT analysis.
+DefaultAssay(T.cells.1.int.SCT) <- "ADT"
+VariableFeatures(T.cells.1.int.SCT) <- rownames(T.cells.1.int.SCT[["ADT"]])
+T.cells.1.int.SCT = NormalizeData(T.cells.1.int.SCT, normalization.method = "CLR", margin = 2)
+T.cells.1.int.SCT = ScaleData(T.cells.1.int.SCT)
+T.cells.1.int.SCT = RunPCA(T.cells.1.int.SCT, features = rownames(T.cells.1.int.SCT), reduction.name = "pca_adt", reduction.key = "pcaadt_", verbose = FALSE)
+print(T.cells.1.int.SCT[["pca_adt"]], dims = 1:5, nFeatures =5)
+VizDimLoadings(T.cells.1.int.SCT, dims = 1:2, reduction = "pca_adt")
+DimPlot(T.cells.1.int.SCT, reduction = "pca_adt")
+
+T.cells.1.int.SCT <- FindNeighbors(T.cells.1.int.SCT, dims = 1:18, reduction = "pca_adt", graph.name = c("dims18_nn", "dims18_snn"))
+T.cells.1.int.SCT <- FindClusters(T.cells.1.int.SCT, resolution = 1, graph.name = "dims18_snn")
+T.cells.1.int.SCT <- RunUMAP(T.cells.1.int.SCT, dims = 1:18, reduction = "pca_adt", reduction.name = "umap_adt_dims18_res1.0")
+DimPlot(T.cells.1.int.SCT, reduction = "umap_adt_dims18_res1.0")
+DimPlot(T.cells.1.int.SCT, reduction = "umap_adt_dims18_res1.0", group.by = "Sample_Name")
+
+#Find closest neighbors based on weighted expression of both ADT and integrated RNA
+T.cells.1.int.SCT <- FindMultiModalNeighbors(T.cells.1.int.SCT, reduction.list = list("pca_int_SCT", "pca_adt"), dims.list = list(1:10, 1:10), modality.weight.name = "RNA.weight")
+T.cells.1.int.SCT <- FindClusters(T.cells.1.int.SCT, graph.name = "wsnn", algorithm = 3, resolution = 0.6, verbose = FALSE)
+T.cells.1.int.SCT <- RunUMAP(T.cells.1.int.SCT, nn.name = "weighted.nn", reduction.name = "wnn.umap_dim10_res0.6", reduction.key = "wnnUMAP_")
+
+names(T.cells.1.int.SCT)
+T.cells.1.int.SCT@meta.data
+
+DimPlot(T.cells.1.int.SCT, reduction = "wnn.umap_dim10_res0.6", label = TRUE, repel = TRUE, label.size = 2.5) + NoLegend()
+DimPlot(T.cells.1.int.SCT, reduction = "wnn.umap_dim10_res0.6", label = TRUE, repel = TRUE, label.size = 2.5, group.by = "cellsubtype_monaco")
+DimPlot(T.cells.1.int.SCT, reduction = "wnn.umap_dim10_res0.6", group.by = "Sample_Name")
+DimPlot(T.cells.1.int.SCT, reduction = "wnn.umap_dim10_res0.6", group.by = "Group")
+DimPlot(T.cells.1.int.SCT, reduction = "wnn.umap_dim10_res0.6", group.by = "cellsubtype_monaco")
+DimPlot(T.cells.1.int.SCT, reduction = "wnn.umap_dim10_res0.6", group.by = "predicted.celltype.l2")
+
+table(T.cells.1.int.SCT$Group)
+
+DimPlot(T.cells.1.int.SCT, reduction = "wnn.umap_dim10_res0.6", group.by = "cellsubtype_monaco", repel = TRUE, cols = c("Follicular helper T cells" = "blue", "Th1/Th17 cells" = "red", "Th17 cells" = "green", "Th2 cells" = "pink", "Th1 cells" = "yellow", "T regulatory cells" = "brown"))
+DimPlot(T.cells.1.int.SCT, reduction = "wnn.umap_dim10_res0.6", group.by = "cellsubtype_monaco", repel = TRUE, cols = c("Vd2 gd T cells" = "blue", "Non-Vd2 gd T cells" = "red", "Natural killer cells" = "green", "MAIT cells" = "pink", "Progenitor cells" = "yellow"))
+DimPlot(T.cells.1.int.SCT, reduction = "wnn.umap_dim10_res0.6", group.by = "cellsubtype_monaco", repel = TRUE, cols = c("Effector memory CD8 T cells" = "blue", "Central memory CD8 T cells" = "red", "Terminal effector CD8 T cells" = "green", "Naive CD4 T cells" = "pink", "Naive CD8 T cells" = "yellow", "Terminal effector CD4 T cells" = "brown"))
+
+DimPlot(T.cells.1.int.SCT, reduction = "wnn.umap_dim10_res0.6", group.by = "wsnn_res.0.6", repel = TRUE, cols = c("3" = "blue", "4" = "red", "5" = "green", "11" = "pink", "9" = "yellow", "15" = "brown"))
+DimPlot(T.cells.1.int.SCT, reduction = "wnn.umap_dim10_res0.6", group.by = "wsnn_res.0.6", repel = TRUE, cols = c("6" = "blue", "8" = "red", "10" = "green", "7" = "pink", "13" = "yellow", "14" = "brown", "19" = "orange"))
+DimPlot(T.cells.1.int.SCT, reduction = "wnn.umap_dim10_res0.6", group.by = "wsnn_res.0.6", repel = TRUE, cols = c("12" = "blue", "0" = "red", "1" = "green", "2" = "pink", "17" = "yellow", "16" = "brown", "18" = "orange"))
+
+table1 <- table(T.cells.1.int.SCT$wsnn_res.0.6, T.cells.1.int.SCT$Group)
+write.csv(table1, file = "C:/Filtered_cells/SCT_integration/Dims18_res0.6/T.cells/cell.per.cluster.per.group.csv")
+
+table2 <- table(T.cells.1.int.SCT$wsnn_res.0.6, T.cells.1.int.SCT$Sample_Name)
+write.csv(table2, file = "C:/Filtered_cells/SCT_integration/Dims18_res0.6/T.cells/cell.per.cluster.per.sample.csv")
+
+saveRDS(T.cells.1.int.SCT, file = "D:/Angelica/R_JE_computer/Saved_files/QC_all_lib_all_cells/Filtered_cells/SCT_integration/Dims18_res0.6/T.cells/Excluding_P3093/T.cells.1.int.SCT.rds")
+
+#Plots of RNA and Protein expression, and vizualization based on reference mapping.
+T.cells.1.int.SCT <- readRDS("D:/Angelica/R_JE_computer/Saved_files/QC_all_lib_all_cells/Filtered_cells/SCT_integration/Dims18_res0.6/T.cells/Excluding_P3093/T.cells.1.int.SCT.rds")
+
+DefaultAssay(T.cells.1.int.SCT) <- "RNA"
+T.cells.1.int.SCT = NormalizeData(T.cells.1.int.SCT)
+T.cells.1.int.SCT <- FindVariableFeatures(T.cells.1.int.SCT, selection.method = "vst", nfeatures = 2000)
+top10variable <- head(VariableFeatures(T.cells.1.int.SCT), 100)
+top10variable
+VariableFeaturePlot <- VariableFeaturePlot(T.cells.1.int.SCT)
+VariableFeaturePlot
+VariableFeaturePlotWithLabels <- LabelPoints(plot = VariableFeaturePlot, points = top10variable, repel = TRUE, xnudge = 0, ynudge = 0)
+VariableFeaturePlotWithLabels
+all.genes <- rownames(T.cells.1.int.SCT)
+T.cells.1.int.SCT = ScaleData(T.cells.1.int.SCT, features = all.genes, model.use = "linear")
+
+FeaturePlot(T.cells.1.int.SCT, feature = "CD8A", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, feature = "CD3E", reduction = "wnn.umap_dim10_res0.6")
+
+T.cells.1.int.SCT <- SetIdent(T.cells.1.int.SCT, value = T.cells.1.int.SCT@meta.data$wsnn_res.0.6)
+
+features_RNA <- c("CD3E", "CD8A", "CCR7", "IL7R", "SELL", "HLA.DRA", "GZMA", "GNLY", "NKG7", "MKI67", "PCNA", "KLRB1")
+
+levels(T.cells.1.int.SCT)
+levels(x = T.cells.1.int.SCT) <- c("1", "13", "15", "6", "0", "5", "2", "7", "8", "16", "17", "18", "14", "10", "19", "9", "4", "3", "11", "12")
+
+DotPlot(T.cells.1.int.SCT, features = features_RNA) + RotatedAxis()
+DoHeatmap(subset(T.cells.1.int.SCT, downsample = 100), features = features_RNA, size = 3)
+StackedVlnPlot(T.cells.1.int.SCT, features = features_RNA, colors.ggplot = TRUE) 
+
+#Expression of the 30 analyzed antibodies
+DefaultAssay(T.cells.1.int.SCT) <- "ADT"
+VariableFeatures(T.cells.1.int.SCT) <- rownames(T.cells.1.int.SCT[["ADT"]])
+T.cells.1.int.SCT = NormalizeData(T.cells.1.int.SCT, normalization.method = "CLR", margin = 2)
+T.cells.1.int.SCT = ScaleData(T.cells.1.int.SCT)
+
+FeaturePlot(T.cells.1.int.SCT, features = "IgM.IGHM.AHS0198.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "Tim3.HAVCR2.AHS0016.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "IgD.IGHD.AHS0058.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "HLA.DR.CD74.AHS0035.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "GITR.TNFRSF18.AHS0104.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CXCR6.CXCR6.AHS0148.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CXCR5.CXCR5.AHS0039.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CD8.SK1.CD8A.AHS0228.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CD62L.DREG.56.SELL.AHS0049.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CD56.NCAM16.2.NCAM1.AHS0019.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CD4.SK3.CD4.AHS0032.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CD45RA.HI100.PTPRC.AHS0009.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CD3.UCHT1.CD3E.AHS0231.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CD28.L293.CD28.AHS0138.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CD27.M.T271.CD27.AHS0025.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CD279.EH12.1.PDCD1.AHS0014.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CD278.ICOS.AHS0012.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CD272.BTLA.AHS0052.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CD25.2A3.IL2RA.AHS0026.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CD19.SJ25C1.CD19.AHS0030.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CD196.CCR6.AHS0034.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CD183.CXCR3.AHS0031.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CD16.3G8.FCGR3A.AHS0053.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CD161.HP.3G10.KLRB1.AHS0205.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CD14.MPHIP9.CD14.AHS0037.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CD137.TNFRSF9.AHS0003.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CD134.ACT35.TNFRSF4.AHS0013.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CD127.IL7R.AHS0028.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CD11c.B.LY6.ITGAX.AHS0056.pAbO", reduction = "wnn.umap_dim10_res0.6")
+FeaturePlot(T.cells.1.int.SCT, features = "CCR7.CCR7.AHS0273.pAbO", reduction = "wnn.umap_dim10_res0.6")
+
+
+#FindMarkers analysis for cluster annotation
+DefaultAssay(T.cells.1.int.SCT) <- "RNA"
+
+#Set ident to test for differences in specific clusters.
+T.cells.1.int.SCT <- SetIdent(T.cells.1.int.SCT, value = T.cells.1.int.SCT@meta.data$wsnn_res.0.6)
+
+#Cluster 0
+cluster0.markers <- FindMarkers(T.cells.1.int.SCT, ident.1 = 0, min.pct = 0.25)
+head(cluster0.markers, n = 10)
+write.csv(cluster0.markers, "C:/Filtered_cells/SCT_integration/Dims18_res0.6/T_cells/cluster0_markers.csv")
+
+#Repeat above for all clusters.
+
+#Identify DEGs between groups for the different T- and NK-cell subpopulations.
+#Add metadata column to be able to test for differences between study groups
+T.cells.1.int.SCT$wsnn_res.0.6.group <- paste(Idents(T.cells.1.int.SCT), T.cells.1.int.SCT$Group, sep = "_")
+
+T.cells.1.int.SCT <- SetIdent(T.cells.1.int.SCT, value = T.cells.1.int.SCT@meta.data$wsnn_res.0.6.group)
+
+#Identify DEGs between HIV-1 viremic and HIV-negative in Cluster0
+cluster0_1vs0_0.58 <- FindMarkers(T.cells.1.int.SCT, ident.1 = "0_1", ident.2 = "0_0", verbose = FALSE, logfc.threshold = 0.58, )
+head(cluster0_1vs0_0.58)
+write.csv(cluster0_1vs0_0.58, "C:/Filtered_cells/SCT_integration/Dims18_res0.6/T_cells/cluster0_1vs0_0.58.csv")
+
+#Repeat above for all clusters
+
+#Identify DEGs between HIV-2 viremic and HIV-negative in Cluster1
+cluster1_2vs0_0.58 <- FindMarkers(T.cells.1.int.SCT, ident.1 = "1_2", ident.2 = "1_0", verbose = FALSE, logfc.threshold = 0.58)
+write.csv(cluster1_2vs0_0.58, "C:/Filtered_cells/SCT_integration/Dims18_res0.6/T.cells/cluster1_2vs0_0.58.csv")
+
+#Repeat above for all clusters
+
+#Identify DEGs between HIV-2 viremic and HIV-1 viremic in Cluster2
+cluster2_2vs1_0.58 <- FindMarkers(T.cells.1.int.SCT, ident.1 = "2_2", ident.2 = "2_1", verbose = FALSE, logfc.threshold = 0.58)
+write.csv(cluster2_2vs1_0.58, "C:/Filtered_cells/SCT_integration/Dims18_res0.6/T.cells/cluster2_2vs1_0.58.csv")
+
+#Repeat above for all clusters
+
+#Repeat above for all clusters
+
+#Identify DEGs between HIV-2 aviremic and HIV-negative in Cluster3
+cluster3_3vs0_0.58 <- FindMarkers(T.cells.1.int.SCT, ident.1 = "3_3", ident.2 = "3_0", verbose = FALSE, logfc.threshold = 0.58)
+write.csv(cluster3_3vs0_0.58, "C:/Filtered_cells/SCT_integration/Dims18_res0.6/T_cells/cluster2_3vs0_0.58.csv")
+
+#Repeat above for all clusters
+
+#Identify DEGs between HIV-1 viremic and HIV-2 aviremic in Cluster4
+cluster4_1vs3_0.58 <- FindMarkers(T.cells.1.int.SCT, ident.1 = "4_1", ident.2 = "4_3", verbose = FALSE, logfc.threshold = 0.58)
+write.csv(cluster4_1vs3_0.58, "C:/Filtered_cells/SCT_integration/Dims18_res0.6/T_cells/cluster4_1vs3_0.58.csv")
+
+#Repeat above for all clusters
+
+#Identify DEGs between HIV-2 viremic and HIV-2 aviremic in Cluster5
+cluster5_2vs3_0.58 <- FindMarkers(T.cells.1.int.SCT, ident.1 = "5_2", ident.2 = "5_3", verbose = FALSE, logfc.threshold = 0.58)
+write.csv(cluster5_2vs3_0.58, "C:/Filtered_cells/SCT_integration/Dims18_res0.6/T.cells/cluster5_2vs3_0.58.csv")
+
+#Repeat above for all clusters
