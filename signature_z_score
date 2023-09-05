@@ -1,0 +1,70 @@
+library(ggpubr)
+library(rstatix)
+library(Seurat)
+
+#Compute Z-scores for key gene signatures
+Mono.1.int.SCT <- readRDS("C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/Mono.1.int.SCT.rds")
+
+Mono.1.int.SCT <- SetIdent(Mono.1.int.SCT, value = Mono.1.int.SCT@meta.data$integrated_snn_res.0.3)
+
+#Analysis of cluster 2 - non-classical Monocytes
+currCell_subset2 <- subset(Mono.1.int.SCT, idents = c("2"))
+DefaultAssay(currCell_subset2) <- "SCT"
+expdata2 <- GetAssayData(currCell_subset2)
+
+#Analysis of the COMPLEMENT ACTIVATION PATHWAY
+#The genes included are a compilation of all leading edge genes identified in the comparison of HIV-1 to Negative AND HIV-2 to Negative 
+Pop_comp <-c("C1QB","C1QC","C1QA","SERPING1","IL1B","FCN1","C2","RGCC","CFD")
+pops_comp <-list(Pop_comp)
+
+#Z-Scores
+z_scores_comp<-NULL
+for (i in 1:length(pops_comp)) {
+  genes_comp <- pops_comp[[i]]
+  zz_comp <- which(tolower(rownames(expdata2)) %in% tolower(genes_comp))
+  av_comp <- numeric(ncol(expdata2))
+  geneExp_comp <- as.matrix(expdata2[zz_comp, ])
+  geneExp_comp <- t(scale(t(geneExp_comp)))
+  geneExp_comp[is.nan(geneExp_comp)] <- 0
+  z_scores_comp <- rbind(z_scores_comp,(av_comp + colSums(geneExp_comp) / length(zz_comp)))
+}
+
+currCell_subset2@meta.data$pop_comp_z <- z_scores_comp[1,]
+currCell_subset2@meta.data
+
+cluster2_AvgZ_comp <- NULL
+cluster2_AvgZ_comp <- rbind(cluster2_AvgZ_comp,(aggregate(currCell_subset2$pop_comp_z, by=list(cluster=currCell_subset2@active.ident), mean)[,2]))
+Idents(currCell_subset2) <- "Group"
+cluster2_neg <- subset(currCell_subset2, idents = c("0"))
+cluster2_HIV1 <- subset(currCell_subset2, idents = c("1"))
+cluster2_HIV2vir <- subset(currCell_subset2, idents = c("2"))
+cluster2_HIV2avir <- subset(currCell_subset2, idents = c("3"))
+
+#Write z-scores for each cell, split by group
+write.csv(cluster2_neg$pop_comp_z, file ="C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/z_scores/cluster2_neg_comp_z_score.csv", quote = FALSE)
+write.csv(cluster2_HIV1$pop_comp_z, file ="C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/z_scores/z_scores/cluster2_HIV1_comp_z_score.csv", quote = FALSE)
+write.csv(cluster2_HIV2vir$pop_comp_z, file ="C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/z_scores/z_scores/cluster2_HIV2vir_comp_z_score.csv", quote = FALSE)
+write.csv(cluster2_HIV2avir$pop_comp_z, file ="C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/z_scores/z_scores/cluster2_HIV2avir_comp_z_score.csv", quote = FALSE)
+
+#Use files above to manually compile a csv-file for statistical testing. 
+#Example file available.
+cluster2_comp_z_scores <- read.csv("C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/z_scores/cluster2_comp_z_scores.csv", sep = ";")
+summary(cluster2_comp_z_scores)
+
+cluster2_comp_z_scores$Group <- factor(cluster2_comp_z_scores$Group , levels=c("Negative", "HIV-2 avir", "HIV-2 vir", "HIV-1"))
+
+#Anova to test for differences between groups + Tukeys
+res.aov_comp <- cluster2_comp_z_scores %>% anova_test(z_score ~ Group)
+res.aov_comp
+res.t_hsd_comp <- cluster2_comp_z_scores %>% tukey_hsd(z_score ~ Group)
+res.t_hsd_comp
+res.t_hsd_comp <- res.t_hsd_comp %>% add_xy_position(x = "Group")
+
+ggviolin(cluster2_comp_z_scores, "Group", "z_score", add = "boxplot", add.params = list(fill = "white"), fill = "Group", palette = c("#CCCCCC", "#66CC66", "#3366CC", "#CC3333"), legend = "none", width = 0.9, size = 0.5) +
+  stat_pvalue_manual(res.t_hsd_comp, hide.ns = TRUE) +
+  geom_hline(yintercept=0, linetype="dashed", color= "#666666") +
+  labs(
+    subtitle = get_test_label(res.aov_comp, detailed = TRUE),
+    caption = get_pwc_label(res.t_hsd_comp)
+  ) + 
+  ggtitle("Complement activation z-score cluster 2")
