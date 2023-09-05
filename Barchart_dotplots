@@ -1,0 +1,91 @@
+library(ggplot2)
+
+#Stacked barchart of differentially expressed genes - Figure 3
+#Compile a list of the number of differentially expressed genes in various clusters (file available)
+#Groups as follows 0 = Negative, 1 = HIV-1, 2 = HIV-2 viremic, 3 = HIV-2 aviremic
+barchart_mono <- read.csv("C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/DEG_by_cluster_monocytes_r_barchart.csv", sep=";")
+
+barchart_mono$group <- factor(barchart_mono$group,                              
+                              levels = c("1 vs 0", "1 vs 3", "2 vs 0", "2 vs 3", "2 vs 1", "3 vs 0"))
+
+ggplot(barchart_mono, aes(x = group, y = DEGs, fill = stack)) + xlab(NULL) + geom_bar(stat = "identity", position = "stack") + 
+  scale_fill_manual(values=c("dark red", "dark blue")) + 
+  facet_grid(~facet, switch = "x") + 
+  theme_linedraw() + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) + 
+  theme(legend.position = "none")
+
+barchart_T_cells <- read.csv("C:/Filtered_cells/SCT_integration/Dims18_res0.6/T.cells/DEG_by_cluster_t_cells_r_barchart.csv", sep=";")
+barchart_T_cells$group <- factor(barchart_T_cells$group,                              
+                                 levels = c("1 vs 0", "1 vs 3", "2 vs 0", "2 vs 3", "2 vs 1", "3 vs 0"))
+
+barchart_T_cells$facet <- factor(barchart_T_cells$facet,                              
+                                 levels = c("6", "0", "5", "2", "9", "4", "3", "11", "12", "14", "19", "10"))
+
+ggplot(barchart_T_cells, aes(x = group, y = DEGs, fill = stack)) + xlab(NULL) + geom_bar(stat = "identity", position = "stack") + 
+  scale_fill_manual(values=c("dark red", "dark blue")) + 
+  facet_grid(~facet, switch = "x") + 
+  theme_linedraw() + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) + 
+  theme(legend.position = "none")
+
+barchart_b_cells <- read.csv("C:/Filtered_cells/SCT_integration/Dims18_res0.6/B.cells/DEG_by_cluster_b_cells_r_barchart.csv", sep=";")
+
+barchart_b_cells$group <- factor(barchart_b_cells$group,                              
+                                 levels = c("1 vs 0", "1 vs 3", "2 vs 0", "2 vs 3", "2 vs 1", "3 vs 0"))
+
+ggplot(barchart_b_cells, aes(x = group, y = DEGs, fill = stack)) + xlab(NULL) + geom_bar(stat = "identity", position = "stack") + 
+  scale_fill_manual(values=c("dark red", "dark blue")) + 
+  facet_grid(~facet, switch = "x") + 
+  theme_linedraw() + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) + 
+  theme(legend.position = "none")
+
+barchart_nk_cells <- read.csv("C:/Filtered_cells/SCT_integration/Dims18_res0.6/T.cells/DEG_by_cluster_NK_cells_r_barchart.csv", sep=";")
+
+barchart_nk_cells$group <- factor(barchart_nk_cells$group,                              
+                                  levels = c("1 vs 0", "1 vs 3", "2 vs 0", "2 vs 3", "2 vs 1", "3 vs 0"))
+
+ggplot(barchart_nk_cells, aes(x = group, y = DEGs, fill = stack)) + xlab(NULL) + geom_bar(stat = "identity", position = "stack") + 
+  scale_fill_manual(values=c("dark red", "dark blue")) + 
+  facet_grid(~facet, switch = "x") + 
+  theme_linedraw() + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) + 
+  theme(legend.position = "none")
+
+
+#Stacked barchart of cell proportions - Figure 1D
+barchart_main_celltypes <- read.csv("C:/Filtered_cells/SCT_integration/Dims18_res0.6/proportion_main_celltypes_by_group.csv", sep=";")
+
+barchart_main_celltypes$Group <- factor(barchart_main_celltypes$Group,                              
+                                        levels = c("Negative", "HIV-2 avir", "HIV-2 vir", "HIV-1"))
+
+ggplot(barchart_main_celltypes, aes(x = Group, y = Proportion, fill = factor(Stack, levels = c("Undefined", "DC", "B cells", "NK cells", "Monocytes", "T cells")))) + xlab(NULL) + geom_bar(stat = "identity", position = "Stack") + 
+  scale_fill_manual(values=c("#ED68ED", "#00A9FF", "#00BFC4", "#F8766D", "#0CB702", "#CD9600")) + 
+  theme_linedraw() + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) + 
+  theme(legend.position = "right")
+
+#Facet dotplot pathways - Figure 5G
+#Group 1 vs 0 and 2 vs 0
+pathways <- read.csv("C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/FGSEA/pathways_all_clusters_1_2vs0_NES2_r.csv", sep=";")
+
+pathways$Group <- factor(pathways$Group,                              
+                         levels = c("1vs0", "2vs0"))
+
+ggplot(pathways, aes(x=Group, y=Pathway, size=X.log10.adj.p, color=NES, group=facet)) + 
+  geom_point(alpha = 1.0) +
+  facet_grid(~facet) +
+  scale_color_gradient2(low = "mediumblue", mid = "white", high = "red2", limit = c(-3, 3))+
+  scale_y_discrete(limits=rev) +
+  theme_bw()
+
+#Group 3 vs 0 - Supplemental Figure S7
+pathways_3vs0 <- read.csv("C:/Filtered_cells/SCT_integration/Dims18_res0.6/Monocytes/FGSEA/pathways_all_clusters_3vs0_NES2_r.csv", sep=";")
+
+ggplot(pathways_3vs0, aes(x=Group, y=Pathway, size=X.log10adj.p, color=NES, group=facet)) + 
+  geom_point(alpha = 1.0) +
+  facet_grid(~facet) +
+  scale_color_gradient2(low = "mediumblue", mid = "white", high = "red2", limit = c(-3, 3))+
+  scale_y_discrete(limits=rev) +
+  theme_bw()
